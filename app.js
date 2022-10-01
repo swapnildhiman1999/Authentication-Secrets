@@ -8,7 +8,8 @@ const mongoose = require("mongoose");
 const session=require('express-session');
 const passport=require('passport');
 const passportLocalMongoose=require('passport-local-mongoose');
-
+const  GoogleStrategy = require('passport-google-oauth20').Strategy;
+const findOrCreate = require('mongoose-findorcreate');
 
 
 
@@ -44,11 +45,14 @@ mongoose.connect("mongodb://localhost:27017/userDB", {useNewUrlParser: true});
 
 const userSchema = new mongoose.Schema ({
   email: String,
-  password: String
+  password: String,
+  googleId: String,
+  secret:String
 });
 
 // Adding plugin to userSchema to hash and salt the password and save into mongodb
 userSchema.plugin(passportLocalMongoose);
+userSchema.plugin(findOrCreate);
 
 // const secret = process.env.SECRET;
 // userSchema.plugin(encrypt, { secret: secret, encryptedFields: ["password"] });
@@ -56,6 +60,16 @@ userSchema.plugin(passportLocalMongoose);
 const User = new mongoose.model("User", userSchema);
 
 passport.use(User.createStrategy());
+
+passport.serializeUser(function(user,done){
+  done(null,user.id);
+});
+
+passport.deserializeUser(function(id,done){
+  User.findById(id,function(err,user){
+    done(err,user);
+  });
+});
 
 /*
 // we're ready to configure the very last thing which is the passport local configurations and we're going
@@ -69,11 +83,63 @@ passport.use(User.createStrategy());
 // And all of their identification so that we can authenticate them on our server.
 */
 
-passport.serializeUser(User.serializeUser());
-passport.deserializeUser(User.deserializeUser());
+passport.use(new GoogleStrategy({
+    clientID: process.env.CLIENT_ID,
+    clientSecret: process.env.CLIENT_SECRET,
+    callbackURL: "http://localhost:3000/auth/google/secrets", //google kahaan bhejega after authenticated from their server,this is the link where user will now get authenticated locally, same as google developer mai jo url daala hai
+    userProfileURL:"https://www.googleapis.com/oauth2/v3/userinfo" //we are no longer be reteriving from google+ account which has been deprecated , now it will get information from userinfo
+  },
+  // Google sends back access token which allows us to get data
+  function(accessToken, refreshToken, profile, cb) {
+    // profile will contain email,googleid
+    /*
+    So now, when the user clicks on that button that says "Sign up with Google", it will hit up the /auth/
+
+google route which gets caught over here and that will initiate authentication on Google's servers asking
+
+them for the user's profile once they've logged in.
+
+Now once that's been successful, Google will redirect the user back to our website and make a get request
+
+to /auth/google/secrets. And it's at this point where we will authenticate them locally and save
+
+their login session.
+
+Now once they've been successfully authenticated, we take them to /secrets.
+
+But at this stage, the Google authentication has already completed and this callback function gets triggered.
+*/
+    console.log(profile);
+    // This callback function will get triggered when we sign in using google and trying to store them in our userDB
+    User.findOrCreate({ googleId: profile.id }, function (err, user) {
+      // finding googleId in user DB
+      return cb(err, user);
+    });
+  }
+));
+
+
+// passport.serializeUser(User.serializeUser());
+// passport.deserializeUser(User.deserializeUser());
+
 
 app.get("/", function(req, res){
   res.render("home");
+});
+
+app.get("/auth/google",
+  // initiate authentication with google
+  // use passport to authenticate using GoogleStrategy and when we hit google we tell them we want their profile(email,googleid)
+  passport.authenticate("google", { scope: ['profile'] })
+  // brings a pop up to sign into google
+);
+
+// This is made by google where we will authenticate the user locally
+app.get("/auth/google/secrets",
+  passport.authenticate("google", { failureRedirect: "/login" }),
+  function(req, res) {
+    // Successful authentication, redirect home.
+    res.redirect("/secrets");
 });
 
 app.get("/login", function(req, res){
@@ -86,13 +152,44 @@ app.get("/register", function(req, res){
 
 app.get("/secrets",function(req,res){
   // Check if the user is authenticated (already logged in - simply render the secrets page)
+  // Publish all the secrets
+  // find all the user having secret value exists
+  User.find({"secret":{$ne:null}},function(err,foundUsers){
+    if(err){
+      console.log(err);
+    }else{
+      if(foundUsers){
+        res.render("secrets",{usersWithSecrets:foundUsers});
+      }
+    }
+  });
+});
+
+app.get("/submit",function(req,res){
   if(req.isAuthenticated()){
-    res.render("secrets");
+    res.render("submit");
   }else{
     res.redirect("/login");
   }
 });
 
+app.post("/submit",function(req,res){
+  const submittedSecret=req.body.secret;
+  // finding the current user in the database
+  // passport will save the details in req.user
+  // const req.user.id
+  User.findById(req.user.id,function(err,foundUser){
+    if(err){console.log(err);}
+    else{
+      if(foundUser){
+        foundUser.secret=submittedSecret;
+        foundUser.save(function(){
+          res.redirect("/secrets");
+        });
+      }
+    }
+  });
+});
 
 app.get("/logout",function(req,res){
  // Deauthenticate the user and destroy the session
