@@ -4,7 +4,8 @@ const bodyParser = require("body-parser");
 const ejs = require("ejs");
 const mongoose = require("mongoose");
 
-const encrypt = require("mongoose-encryption");
+const md5=require("md5");
+// const encrypt = require("mongoose-encryption");
 
 const app = express();
 
@@ -21,8 +22,8 @@ const userSchema = new mongoose.Schema ({
   password: String
 });
 
-const secret = process.env.SECRET;
-userSchema.plugin(encrypt, { secret: secret, encryptedFields: ["password"] });
+// const secret = process.env.SECRET;
+// userSchema.plugin(encrypt, { secret: secret, encryptedFields: ["password"] });
 
 const User = new mongoose.model("User", userSchema);
 
@@ -42,7 +43,7 @@ app.post("/register", function(req, res){
 
     const newUser=new User({
       email:req.body.username,
-      password:req.body.password
+      password:md5(req.body.password)
     });
 
     newUser.save(function(err){
@@ -57,7 +58,8 @@ app.post("/register", function(req, res){
 
 app.post("/login",function(req,res){
     const username=req.body.username;
-    const password=req.body.password;
+    const password=md5(req.body.password);
+    // comparing the hashed form of the password
 
     console.log(username);
     console.log(password);
@@ -67,8 +69,10 @@ app.post("/login",function(req,res){
         console.log(err);
       }else{
         if(foundUser){
+          console.log(foundUser.password+"   "+password);
           if(foundUser.password===password){
             // Successfully logged in
+
             res.render("secrets");
           }else{
             res.send("Wrong Password");
